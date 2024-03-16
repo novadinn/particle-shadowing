@@ -112,12 +112,10 @@ b8 VulkanPipeline::createGraphics(
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
   vertex_input_info.pNext = 0;
   vertex_input_info.flags = 0;
-  vertex_input_info.vertexBindingDescriptionCount = 1;
-  vertex_input_info.pVertexBindingDescriptions =
-      &vertex_input_binding_description;
-  vertex_input_info.vertexAttributeDescriptionCount = 1;
-  vertex_input_info.pVertexAttributeDescriptions =
-      &vertex_input_attribute_description;
+  vertex_input_info.vertexBindingDescriptionCount = 0;
+  vertex_input_info.pVertexBindingDescriptions = 0;
+  vertex_input_info.vertexAttributeDescriptionCount = 0;
+  vertex_input_info.pVertexAttributeDescriptions = 0;
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly = {};
   input_assembly.sType =

@@ -129,9 +129,12 @@ void VulkanCommandBuffer::dispatch(u32 local_size_x, u32 local_size_y) {
 void VulkanCommandBuffer::descriptorSetBind(VulkanPipeline *pipeline,
                                             VkPipelineBindPoint bind_point,
                                             VkDescriptorSet descriptor_set,
-                                            u32 set_index, u32 dynamic_offset) {
+                                            u32 set_index,
+                                            u32 dynamic_offset_count,
+                                            u32 *dynamic_offsets) {
   vkCmdBindDescriptorSets(handle, bind_point, pipeline->layout, set_index, 1,
-                          &descriptor_set, 1, &dynamic_offset);
+                          &descriptor_set, dynamic_offset_count,
+                          dynamic_offsets);
 }
 
 void VulkanCommandBuffer::bufferBind(VulkanBuffer *buffer, u32 offset) {

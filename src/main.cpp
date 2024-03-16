@@ -161,18 +161,19 @@ int main(int argc, char **argv) {
       vulkanDescriptorSetLayoutBinding(
           0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
           VK_SHADER_STAGE_VERTEX_BIT);
-  VkDescriptorSetLayoutCreateInfo graphics_descriptor_set_layout_create_info =
-      {};
-  graphics_descriptor_set_layout_create_info.sType =
-      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  graphics_descriptor_set_layout_create_info.pNext = 0;
-  graphics_descriptor_set_layout_create_info.flags = 0;
-  graphics_descriptor_set_layout_create_info.bindingCount = 1;
-  graphics_descriptor_set_layout_create_info.pBindings =
-      &descriptor_set_layout_binding;
-  VkDescriptorSetLayout graphics_descriptor_set_layout =
-      VulkanDescriptorSetLayoutCache::layoutCreate(
-          &device, &graphics_descriptor_set_layout_create_info);
+  //   VkDescriptorSetLayoutCreateInfo
+  //   graphics_descriptor_set_layout_create_info =
+  //       {};
+  //   graphics_descriptor_set_layout_create_info.sType =
+  //       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  //   graphics_descriptor_set_layout_create_info.pNext = 0;
+  //   graphics_descriptor_set_layout_create_info.flags = 0;
+  //   graphics_descriptor_set_layout_create_info.bindingCount = 1;
+  //   graphics_descriptor_set_layout_create_info.pBindings =
+  //       &descriptor_set_layout_binding;
+  //   VkDescriptorSetLayout graphics_descriptor_set_layout =
+  //       VulkanDescriptorSetLayoutCache::layoutCreate(
+  //           &device, &graphics_descriptor_set_layout_create_info);
 
   std::vector<VkPipelineShaderStageCreateInfo>
       graphics_pipeline_stage_create_infos;
@@ -215,8 +216,9 @@ int main(int argc, char **argv) {
 
   VulkanPipeline graphics_pipeline;
   graphics_pipeline.createGraphics(
-      &device, &render_pass, 1, &graphics_descriptor_set_layout,
-      graphics_pipeline_stage_create_infos.size(),
+      &device, &render_pass,
+      // 1, &graphics_descriptor_set_layout,
+      0, 0, graphics_pipeline_stage_create_infos.size(),
       graphics_pipeline_stage_create_infos.data(), 1, &push_constant_range, 0,
       0, viewport, scissor);
 
@@ -277,7 +279,46 @@ int main(int argc, char **argv) {
 
   compute_shader_module.destroy(&device);
 
+  VulkanBuffer compute_readonly_buffer;
+  compute_readonly_buffer.create(&allocator, sizeof(Particle) * 1024,
+                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                 VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+  VulkanDescriptorSetBuilder builder;
+  VkDescriptorSet compute_readonly_descriptor_set;
+  builder.begin();
+  VkDescriptorBufferInfo compute_readonly_buffer_info = {};
+  compute_readonly_buffer_info.buffer = compute_readonly_buffer.handle;
+  compute_readonly_buffer_info.offset = 0;
+  compute_readonly_buffer_info.range = compute_readonly_buffer.size;
+  builder.bufferBind(0, &compute_readonly_buffer_info,
+                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                     VK_SHADER_STAGE_COMPUTE_BIT);
+  builder.end(&device, &compute_readonly_descriptor_set);
+
+  VulkanBuffer compute_writeonly_buffer;
+  compute_writeonly_buffer.create(&allocator, sizeof(float) * 1024,
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  VMA_MEMORY_USAGE_GPU_TO_CPU);
+
+  builder = {};
+  VkDescriptorSet compute_writeonly_descriptor_set;
+  builder.begin();
+  VkDescriptorBufferInfo compute_writeonly_buffer_info = {};
+  compute_writeonly_buffer_info.buffer = compute_writeonly_buffer.handle;
+  compute_writeonly_buffer_info.offset = 0;
+  compute_writeonly_buffer_info.range = compute_writeonly_buffer.size;
+  builder.bufferBind(0, &compute_writeonly_buffer_info,
+                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                     VK_SHADER_STAGE_COMPUTE_BIT);
+  builder.end(&device, &compute_writeonly_descriptor_set);
+
   b8 running = true;
+  uint32_t current_frame = 0;
   while (running) {
     SDL_Event event;
     Input::begin();
@@ -302,9 +343,92 @@ int main(int argc, char **argv) {
       } break;
       }
     }
+
+    device.waitIdle();
+
+    VulkanFence &compute_fence = compute_in_flight_fences[current_frame];
+    compute_fence.wait(&device, UINT64_MAX);
+    compute_fence.reset(&device);
+
+    VulkanCommandBuffer &compute_command_buffer =
+        compute_command_buffers[current_frame];
+    compute_command_buffer.begin(0);
+
+    compute_command_buffer.pipelineBind(VK_PIPELINE_BIND_POINT_COMPUTE,
+                                        &compute_pipeline);
+    compute_command_buffer.descriptorSetBind(
+        &compute_pipeline, VK_PIPELINE_BIND_POINT_COMPUTE,
+        compute_readonly_descriptor_set, 0, 0, 0);
+    compute_command_buffer.descriptorSetBind(
+        &compute_pipeline, VK_PIPELINE_BIND_POINT_COMPUTE,
+        compute_writeonly_descriptor_set, 1, 0, 0);
+
+    compute_command_buffer.dispatch(window_width / 16, 1);
+
+    compute_command_buffer.end();
+
+    compute_queue.submit(&compute_command_buffer, 0, 0, 1,
+                         &compute_finished_semaphores[current_frame],
+                         &compute_fence, 0);
+
+    VulkanFence &graphics_fence = in_flight_fences[current_frame];
+    compute_fence.wait(&device, UINT64_MAX);
+    graphics_fence.wait(&device, UINT64_MAX);
+    graphics_fence.reset(&device);
+
+    VulkanSemaphore &image_available_semaphore =
+        image_available_semaphores[current_frame];
+
+    u32 image_index;
+    swapchain.acquireNextImageIndex(&device, UINT64_MAX,
+                                    &image_available_semaphore, &image_index);
+
+    VulkanCommandBuffer &graphics_command_buffer =
+        graphics_command_buffers[current_frame];
+    graphics_command_buffer.begin(0);
+
+    VulkanFramebuffer &framebuffer = framebuffers[image_index];
+
+    glm::vec4 clear_color = {1, 0, 0, 1};
+    glm::vec4 render_area = {0, 0, window_width, window_height};
+    graphics_command_buffer.renderPassBegin(&render_pass, &framebuffer,
+                                            clear_color, render_area);
+
+    glm::vec4 viewport_values = {0.0f, render_area.w, render_area.z,
+                                 -render_area.w};
+    graphics_command_buffer.viewportSet(viewport_values);
+    glm::vec4 scissor_values = {0, 0, render_area.z, render_area.w};
+    graphics_command_buffer.scissorSet(scissor_values);
+
+    graphics_command_buffer.pipelineBind(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         &graphics_pipeline);
+    graphics_command_buffer.draw(4, 1);
+
+    graphics_command_buffer.renderPassEnd();
+
+    graphics_command_buffer.end();
+
+    VkPipelineStageFlags wait_dst_stage_masks[2] = {
+        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    std::vector<VulkanSemaphore> wait_semaphores = {
+        compute_finished_semaphores[current_frame],
+        image_available_semaphores[current_frame]};
+
+    graphics_queue.submit(
+        &graphics_command_buffer, wait_semaphores.size(),
+        wait_semaphores.data(), 1, &render_finished_semaphores[current_frame],
+        &in_flight_fences[current_frame], wait_dst_stage_masks);
+    graphics_queue.present(
+        &swapchain, &render_finished_semaphores[current_frame], image_index);
+
+    current_frame = (current_frame + 1) % swapchain.max_frames_in_flight;
   }
 
   device.waitIdle();
+
+  compute_writeonly_buffer.destroy(&allocator);
+  compute_readonly_buffer.destroy(&allocator);
 
   compute_pipeline.destroy(&device);
   graphics_pipeline.destroy(&device);

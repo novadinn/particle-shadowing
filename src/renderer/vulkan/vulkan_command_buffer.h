@@ -39,7 +39,7 @@ struct VulkanCommandBuffer {
   void descriptorSetBind(VulkanPipeline *pipeline,
                          VkPipelineBindPoint bind_point,
                          VkDescriptorSet descriptor_set, u32 set_index,
-                         u32 dynamic_offset);
+                         u32 dynamic_offset_count, u32 *dynamic_offsets);
   void bufferBind(VulkanBuffer *buffer, u32 offset);
   void pushConstants(VulkanPipeline *pipeline, VkShaderStageFlags stage_flags,
                      u32 offset, u32 size, void *values);

@@ -19,6 +19,11 @@ layout (std430, set = 1, binding = 0) writeonly buffer sbShadows
 	float shadows[];
 };
 
+layout(push_constant) uniform PushConstants {
+    vec4 sunDir;
+} pushConstants;
+
+
 bool sphereHit(vec3 ray_origin, vec3 ray_dir, vec3 sphereCentre, float sphereRadius) {
   vec3 offsetRayOrigin = ray_origin - sphereCentre;
   float a = dot(ray_dir, ray_dir);
@@ -38,7 +43,7 @@ bool sphereHit(vec3 ray_origin, vec3 ray_dir, vec3 sphereCentre, float sphereRad
 }
 
 void main() {
-  vec3 sunDir = normalize(vec3(0.0, 1.0, 0.0));
+  vec3 sunDir = normalize(pushConstants.sunDir.xyz);
 
   uint index = gl_GlobalInvocationID.x;
   if (index > particles.length()) {
@@ -57,15 +62,10 @@ void main() {
 
     vec3 toOther = other.pos - current.pos;
 
-    if(dot(toOther, sunDir) <= 0.0) {
-      continue;
-    }
-
     float dst = length(toOther);
 
     if(dst > ((other.radius + current.radius) * 0.5) && sphereHit(current.pos, sunDir, other.pos, other.radius)) {
-      shadow = 1.0;
-      break;
+      shadow += 25.0 / float(particles.length()) * current.opacity;
     }
   }
 

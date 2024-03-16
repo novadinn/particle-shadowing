@@ -23,10 +23,12 @@ struct Camera {
 
   glm::mat4 getProjectionMatrix();
   glm::mat4 getViewMatrix();
+
   glm::vec3 getUp();
   glm::vec3 getRight();
   glm::vec3 getForward();
   glm::quat getOrientation();
+
   glm::vec2 getPanSpeed();
   f32 getRotationSpeed();
   f32 getZoomSpeed();

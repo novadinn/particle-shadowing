@@ -68,9 +68,8 @@ b8 VulkanPipeline::createGraphics(
   color_blend_attachment_state.dstColorBlendFactor =
       VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
   color_blend_attachment_state.colorBlendOp = VK_BLEND_OP_ADD;
-  color_blend_attachment_state.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-  color_blend_attachment_state.dstAlphaBlendFactor =
-      VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  color_blend_attachment_state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  color_blend_attachment_state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
   color_blend_attachment_state.alphaBlendOp = VK_BLEND_OP_ADD;
   color_blend_attachment_state.colorWriteMask =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -173,6 +172,8 @@ b8 VulkanPipeline::createGraphics(
 b8 VulkanPipeline::createCompute(VulkanDevice *device,
                                  u32 descriptor_set_layout_count,
                                  VkDescriptorSetLayout *descriptor_set_layouts,
+                                 u32 push_constants_count,
+                                 VkPushConstantRange *push_constants,
                                  VkPipelineShaderStageCreateInfo stage) {
   VkPipelineLayoutCreateInfo pipeline_layout_create_info = {};
   pipeline_layout_create_info.sType =
@@ -181,8 +182,8 @@ b8 VulkanPipeline::createCompute(VulkanDevice *device,
   pipeline_layout_create_info.flags = 0;
   pipeline_layout_create_info.setLayoutCount = descriptor_set_layout_count;
   pipeline_layout_create_info.pSetLayouts = descriptor_set_layouts;
-  pipeline_layout_create_info.pushConstantRangeCount = 0;
-  pipeline_layout_create_info.pPushConstantRanges = 0;
+  pipeline_layout_create_info.pushConstantRangeCount = push_constants_count;
+  pipeline_layout_create_info.pPushConstantRanges = push_constants;
 
   VK_CHECK(vkCreatePipelineLayout(device->logical_device,
                                   &pipeline_layout_create_info, 0, &layout));

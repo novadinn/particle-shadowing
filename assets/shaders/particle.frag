@@ -14,5 +14,5 @@ layout(push_constant) uniform PushConstants {
 } pushConstants;
 
 void main() { 
-    outFragColor = vec4(vec3(clamp(shadows[pushConstants.shadow_index], 0.5, 1.0)), 1.0);
+    outFragColor = vec4(vec3(shadows[pushConstants.shadow_index]), pushConstants.opacity);
 }

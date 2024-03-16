@@ -23,18 +23,14 @@ struct ParticleSystem {
     for (u32 i = 0; i < NUM_PARTICLES; ++i) {
       particles[i].pos = position;
       particles[i].radius = glm::linearRand(0.1f, 0.5f);
-      particles[i].opacity = 1.0f;
-      velocities[i] = glm::ballRand(1.0);
+      particles[i].opacity = glm::linearRand(0.1f, 1.0f);
+      velocities[i] = glm::ballRand(0.5);
     }
   }
 
   void update(f32 delta_time) {
     for (u32 i = 0; i < NUM_PARTICLES; ++i) {
       particles[i].pos += velocities[i] * delta_time;
-      particles[i].opacity -= 0.5f * delta_time;
-      if (particles[i].opacity < 0.0f) {
-        particles[i].opacity = 0.0f;
-      }
     }
   }
 };

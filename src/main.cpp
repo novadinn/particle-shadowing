@@ -1,5 +1,7 @@
 /* clang-format off */
 #include "camera.h"
+#include "geometry.h"
+#include "core/file_system.h"
 #include "core/input.h"
 #include "core/logger.h"
 #include "core/platform.h"
@@ -45,9 +47,9 @@ struct PushConstants {
   f32 opacity;
 };
 
-std::vector<f32> generateSphereVertices(f32 radius, i32 sector_count,
-                                        i32 stack_count);
-std::vector<u32> generateSphereIndices(i32 sector_count, i32 stack_count);
+struct PushConstantsCompute {
+  glm::vec4 sun_dir;
+};
 
 int main(int argc, char **argv) {
   if (SDL_Init(SDL_INIT_EVERYTHING) < 0) {
@@ -157,9 +159,13 @@ int main(int argc, char **argv) {
   VulkanDescriptorSetLayoutCache::initialize();
 
   VulkanShaderModule vertex_shader_module;
-  vertex_shader_module.create(&device, "assets/shaders/particle.vert.spv");
+  vertex_shader_module.create(
+      &device,
+      FileSystem::joinPath("assets/shaders/particle.vert.spv").c_str());
   VulkanShaderModule fragment_shader_module;
-  fragment_shader_module.create(&device, "assets/shaders/particle.frag.spv");
+  fragment_shader_module.create(
+      &device,
+      FileSystem::joinPath("assets/shaders/particle.frag.spv").c_str());
 
   const u32 sector_count = 36;
   const u32 stack_count = 18;
@@ -311,8 +317,10 @@ int main(int argc, char **argv) {
   builder.end(&device, &graphics_readonly_descriptor_set);
 
   VulkanShaderModule compute_shader_module;
-  compute_shader_module.create(&device,
-                               "assets/shaders/particle_shadowing.comp.spv");
+  compute_shader_module.create(
+      &device,
+      FileSystem::joinPath("assets/shaders/particle_shadowing.comp.spv")
+          .c_str());
 
   VkPipelineShaderStageCreateInfo compute_stage_create_info = {};
   compute_stage_create_info.sType =
@@ -357,9 +365,15 @@ int main(int argc, char **argv) {
       VulkanDescriptorSetLayoutCache::layoutCreate(
           &device, &compute_writeonly_descriptor_set_layout_create_info);
 
+  VkPushConstantRange compute_push_constant_range = {};
+  compute_push_constant_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  compute_push_constant_range.offset = 0;
+  compute_push_constant_range.size = sizeof(PushConstantsCompute);
+
   VulkanPipeline compute_pipeline;
   compute_pipeline.createCompute(&device, compute_descriptor_set_layouts.size(),
-                                 compute_descriptor_set_layouts.data(),
+                                 compute_descriptor_set_layouts.data(), 1,
+                                 &compute_push_constant_range,
                                  compute_stage_create_info);
 
   compute_shader_module.destroy(&device);
@@ -478,6 +492,11 @@ int main(int argc, char **argv) {
     compute_command_buffer.descriptorSetBind(
         &compute_pipeline, VK_PIPELINE_BIND_POINT_COMPUTE,
         compute_writeonly_descriptor_set, 1, 0, 0);
+    PushConstantsCompute push_constants_compute;
+    push_constants_compute.sun_dir = glm::vec4(0.0f, 1.0f, 0.0f, 0.0);
+    compute_command_buffer.pushConstants(
+        &compute_pipeline, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+        sizeof(PushConstantsCompute), &push_constants_compute);
 
     compute_command_buffer.dispatch(NUM_PARTICLES / 256, 1);
 
@@ -505,7 +524,7 @@ int main(int argc, char **argv) {
 
     VulkanFramebuffer &framebuffer = framebuffers[image_index];
 
-    glm::vec4 clear_color = {0, 0, 0, 1};
+    glm::vec4 clear_color = {1, 0, 0, 1};
     glm::vec4 render_area = {0, 0, window_width, window_height};
     graphics_command_buffer.renderPassBegin(&render_pass, &framebuffer,
                                             clear_color, render_area);
@@ -627,73 +646,4 @@ int main(int argc, char **argv) {
   SDL_Quit();
 
   return 0;
-}
-
-std::vector<f32> generateSphereVertices(f32 radius, i32 sector_count,
-                                        i32 stack_count) {
-  std::vector<f32> vertices;
-
-  const f32 PI = acos(-1.0f);
-
-  f32 x, y, z, xy;                            // vertex position
-  f32 nx, ny, nz, length_inv = 1.0f / radius; // normal
-  f32 s, t;                                   // texCoord
-
-  f32 sector_step = 2 * PI / sector_count;
-  f32 stack_step = PI / stack_count;
-  f32 sector_angle, stack_angle;
-
-  for (u32 i = 0; i <= stack_count; ++i) {
-    stack_angle = PI / 2 - i * stack_step; // starting from pi/2 to -pi/2
-    xy = radius * cosf(stack_angle);       // r * cos(u)
-    z = radius * sinf(stack_angle);        // r * sin(u)
-
-    // add (sector_count+1) vertices per stack
-    // the first and last vertices have same position and normal, but different
-    // tex coords
-    for (u32 j = 0; j <= sector_count; ++j) {
-      sector_angle = j * sector_step; // starting from 0 to 2pi
-
-      // vertex position
-      x = xy * cosf(sector_angle); // r * cos(u) * cos(v)
-      y = xy * sinf(sector_angle); // r * cos(u) * sin(v)
-      vertices.push_back(x);
-      vertices.push_back(y);
-      vertices.push_back(z);
-    }
-  }
-
-  return vertices;
-}
-
-std::vector<u32> generateSphereIndices(i32 sector_count, i32 stack_count) {
-  std::vector<u32> indices;
-
-  // indices
-  //  k1--k1+1
-  //  |  / |
-  //  | /  |
-  //  k2--k2+1
-  u32 k1, k2;
-  for (u32 i = 0; i < stack_count; ++i) {
-    k1 = i * (sector_count + 1); // beginning of current stack
-    k2 = k1 + sector_count + 1;  // beginning of next stack
-
-    for (u32 j = 0; j < sector_count; ++j, ++k1, ++k2) {
-      // 2 triangles per sector excluding 1st and last stacks
-      if (i != 0) {
-        indices.push_back(k1);
-        indices.push_back(k2);
-        indices.push_back(k1 + 1);
-      }
-
-      if (i != (stack_count - 1)) {
-        indices.push_back(k1 + 1);
-        indices.push_back(k2);
-        indices.push_back(k2 + 1);
-      }
-    }
-  }
-
-  return indices;
 }

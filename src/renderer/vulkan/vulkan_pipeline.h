@@ -23,6 +23,8 @@ struct VulkanPipeline {
                     VkViewport viewport, VkRect2D scissor);
   b8 createCompute(VulkanDevice *device, u32 descriptor_set_layout_count,
                    VkDescriptorSetLayout *descriptor_set_layouts,
+                   u32 push_constants_count,
+                   VkPushConstantRange *push_constants,
                    VkPipelineShaderStageCreateInfo stage);
   void destroy(VulkanDevice *device);
 };

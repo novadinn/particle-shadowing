@@ -97,3 +97,11 @@ add_custom_target(
   DEPENDS ${SPIRV_BINARY_FILES}
 )
 add_dependencies(${PROJECT_NAME} shaders)
+
+file(GLOB DLLS
+  "${CMAKE_CURRENT_SOURCE_DIR}/lib/windows/SDL2/lib/x64/SDL2.dll"
+)
+
+foreach(DLL ${DLLS})
+  file(COPY ${DLL} DESTINATION "${PROJECT_BINARY_DIR}")
+endforeach()

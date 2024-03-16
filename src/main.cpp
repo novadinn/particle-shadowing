@@ -1,7 +1,7 @@
+#include "camera.h"
 #include "core/input.h"
 #include "core/logger.h"
 #include "core/platform.h"
-
 #include "renderer/vulkan/vk_check.h"
 #include "renderer/vulkan/vulkan_buffer.h"
 #include "renderer/vulkan/vulkan_command_buffer.h"
@@ -33,8 +33,8 @@
 
 struct Particle {
   glm::vec3 pos;
-  float radius;
-  float opacity;
+  f32 radius;
+  f32 opacity;
 };
 
 struct GlobalUBO {
@@ -45,6 +45,10 @@ struct GlobalUBO {
 struct PushConstants {
   glm::mat4 model;
 };
+
+std::vector<f32> generateSphereVertices(f32 radius, i32 sectorCount,
+                                        i32 stackCount);
+std::vector<u32> generateSphereIndices(i32 sectorCount, i32 stackCount);
 
 int main(int argc, char **argv) {
   if (SDL_Init(SDL_INIT_EVERYTHING) < 0) {
@@ -157,23 +161,45 @@ int main(int argc, char **argv) {
   VulkanShaderModule fragment_shader_module;
   fragment_shader_module.create(&device, "assets/shaders/particle.frag.spv");
 
+  const u32 sector_count = 36;
+  const u32 stack_count = 18;
+  std::vector<f32> sphere_vertices =
+      generateSphereVertices(1, sector_count, stack_count);
+  std::vector<u32> sphere_indices =
+      generateSphereIndices(sector_count, stack_count);
+
+  VulkanBuffer sphere_vertex_buffer;
+  sphere_vertex_buffer.create(
+      &allocator, sizeof(f32) * sphere_vertices.size(),
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+  sphere_vertex_buffer.loadDataStaging(&device, &allocator,
+                                       sphere_vertices.data(), &graphics_queue,
+                                       &graphics_command_pool);
+  VulkanBuffer sphere_index_buffer;
+  sphere_index_buffer.create(
+      &allocator, sizeof(u32) * sphere_indices.size(),
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+  sphere_index_buffer.loadDataStaging(&device, &allocator,
+                                      sphere_indices.data(), &graphics_queue,
+                                      &graphics_command_pool);
+
   VkDescriptorSetLayoutBinding descriptor_set_layout_binding =
-      vulkanDescriptorSetLayoutBinding(
-          0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-          VK_SHADER_STAGE_VERTEX_BIT);
-  //   VkDescriptorSetLayoutCreateInfo
-  //   graphics_descriptor_set_layout_create_info =
-  //       {};
-  //   graphics_descriptor_set_layout_create_info.sType =
-  //       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  //   graphics_descriptor_set_layout_create_info.pNext = 0;
-  //   graphics_descriptor_set_layout_create_info.flags = 0;
-  //   graphics_descriptor_set_layout_create_info.bindingCount = 1;
-  //   graphics_descriptor_set_layout_create_info.pBindings =
-  //       &descriptor_set_layout_binding;
-  //   VkDescriptorSetLayout graphics_descriptor_set_layout =
-  //       VulkanDescriptorSetLayoutCache::layoutCreate(
-  //           &device, &graphics_descriptor_set_layout_create_info);
+      vulkanDescriptorSetLayoutBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                       VK_SHADER_STAGE_VERTEX_BIT);
+  VkDescriptorSetLayoutCreateInfo graphics_descriptor_set_layout_create_info =
+      {};
+  graphics_descriptor_set_layout_create_info.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  graphics_descriptor_set_layout_create_info.pNext = 0;
+  graphics_descriptor_set_layout_create_info.flags = 0;
+  graphics_descriptor_set_layout_create_info.bindingCount = 1;
+  graphics_descriptor_set_layout_create_info.pBindings =
+      &descriptor_set_layout_binding;
+  VkDescriptorSetLayout graphics_descriptor_set_layout =
+      VulkanDescriptorSetLayoutCache::layoutCreate(
+          &device, &graphics_descriptor_set_layout_create_info);
 
   std::vector<VkPipelineShaderStageCreateInfo>
       graphics_pipeline_stage_create_infos;
@@ -216,14 +242,32 @@ int main(int argc, char **argv) {
 
   VulkanPipeline graphics_pipeline;
   graphics_pipeline.createGraphics(
-      &device, &render_pass,
-      // 1, &graphics_descriptor_set_layout,
-      0, 0, graphics_pipeline_stage_create_infos.size(),
+      &device, &render_pass, 1, &graphics_descriptor_set_layout,
+      graphics_pipeline_stage_create_infos.size(),
       graphics_pipeline_stage_create_infos.data(), 1, &push_constant_range, 0,
       0, viewport, scissor);
 
   vertex_shader_module.destroy(&device);
   fragment_shader_module.destroy(&device);
+
+  VulkanBuffer global_uniform_buffer;
+  global_uniform_buffer.create(&allocator, sizeof(GlobalUBO),
+                               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                               VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+  VulkanDescriptorSetBuilder builder;
+  VkDescriptorSet global_ubo_descriptor_set;
+  builder.begin();
+  VkDescriptorBufferInfo global_ubo_buffer_info = {};
+  global_ubo_buffer_info.buffer = global_uniform_buffer.handle;
+  global_ubo_buffer_info.offset = 0;
+  global_ubo_buffer_info.range = global_uniform_buffer.size;
+  builder.bufferBind(0, &global_ubo_buffer_info,
+                     VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                     VK_SHADER_STAGE_VERTEX_BIT);
+  builder.end(&device, &global_ubo_descriptor_set);
 
   VulkanShaderModule compute_shader_module;
   compute_shader_module.create(&device,
@@ -286,7 +330,7 @@ int main(int argc, char **argv) {
                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                                  VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-  VulkanDescriptorSetBuilder builder;
+  builder = {};
   VkDescriptorSet compute_readonly_descriptor_set;
   builder.begin();
   VkDescriptorBufferInfo compute_readonly_buffer_info = {};
@@ -299,7 +343,7 @@ int main(int argc, char **argv) {
   builder.end(&device, &compute_readonly_descriptor_set);
 
   VulkanBuffer compute_writeonly_buffer;
-  compute_writeonly_buffer.create(&allocator, sizeof(float) * 1024,
+  compute_writeonly_buffer.create(&allocator, sizeof(f32) * 1024,
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -317,6 +361,10 @@ int main(int argc, char **argv) {
                      VK_SHADER_STAGE_COMPUTE_BIT);
   builder.end(&device, &compute_writeonly_descriptor_set);
 
+  Camera camera;
+  camera.create(45, (f32)window_width / (f32)window_height, 0.1f, 1000.0f);
+
+  glm::ivec2 previous_mouse = {0, 0};
   b8 running = true;
   uint32_t current_frame = 0;
   while (running) {
@@ -333,6 +381,15 @@ int main(int argc, char **argv) {
       case SDL_KEYUP: {
         Input::keyUpEvent(event);
       } break;
+      case SDL_MOUSEBUTTONDOWN: {
+        Input::mouseButtonDownEvent(event);
+      } break;
+      case SDL_MOUSEBUTTONUP: {
+        Input::mouseButtonUpEvent(event);
+      } break;
+      case SDL_MOUSEWHEEL: {
+        Input::wheelEvent(event);
+      } break;
       case SDL_WINDOWEVENT: {
         if (event.window.event == SDL_WINDOWEVENT_CLOSE) {
           running = false;
@@ -342,6 +399,25 @@ int main(int argc, char **argv) {
         running = false;
       } break;
       }
+    }
+
+    float delta_time = 0.01f;
+    glm::ivec2 current_mouse;
+    Input::getMousePosition(&current_mouse.x, &current_mouse.y);
+    glm::vec2 mouse_delta = current_mouse - previous_mouse;
+    mouse_delta *= delta_time;
+
+    glm::ivec2 wheel_movement = {Input::wheel_x, Input::wheel_y};
+
+    if (Input::wasMouseButtonHeld(SDL_BUTTON_MIDDLE)) {
+      if (Input::wasKeyHeld(SDLK_LSHIFT)) {
+        camera.pan(mouse_delta);
+      } else {
+        camera.rotate(mouse_delta);
+      }
+    }
+    if (wheel_movement.y != 0) {
+      camera.zoom(delta_time * wheel_movement.y * 5);
     }
 
     device.waitIdle();
@@ -389,7 +465,7 @@ int main(int argc, char **argv) {
 
     VulkanFramebuffer &framebuffer = framebuffers[image_index];
 
-    glm::vec4 clear_color = {1, 0, 0, 1};
+    glm::vec4 clear_color = {0, 0, 0, 1};
     glm::vec4 render_area = {0, 0, window_width, window_height};
     graphics_command_buffer.renderPassBegin(&render_pass, &framebuffer,
                                             clear_color, render_area);
@@ -400,9 +476,24 @@ int main(int argc, char **argv) {
     glm::vec4 scissor_values = {0, 0, render_area.z, render_area.w};
     graphics_command_buffer.scissorSet(scissor_values);
 
+    GlobalUBO global_ubo;
+    global_ubo.projection = camera.getProjectionMatrix();
+    global_ubo.view = camera.getViewMatrix();
+    global_uniform_buffer.loadData(&allocator, &global_ubo);
+    PushConstants push_constants;
+    push_constants.model = glm::mat4(1.0);
+
+    graphics_command_buffer.bufferVertexBind(&sphere_vertex_buffer, 0);
+    graphics_command_buffer.bufferIndexBind(&sphere_index_buffer, 0);
+    graphics_command_buffer.descriptorSetBind(
+        &graphics_pipeline, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        global_ubo_descriptor_set, 0, 0, 0);
+    graphics_command_buffer.pushConstants(
+        &graphics_pipeline, VK_SHADER_STAGE_VERTEX_BIT, 0,
+        sizeof(PushConstants), &push_constants);
     graphics_command_buffer.pipelineBind(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                          &graphics_pipeline);
-    graphics_command_buffer.draw(4, 1);
+    graphics_command_buffer.drawIndexed(sphere_indices.size());
 
     graphics_command_buffer.renderPassEnd();
 
@@ -423,6 +514,8 @@ int main(int argc, char **argv) {
         &swapchain, &render_finished_semaphores[current_frame], image_index);
 
     current_frame = (current_frame + 1) % swapchain.max_frames_in_flight;
+
+    Input::getMousePosition(&previous_mouse.x, &previous_mouse.y);
   }
 
   device.waitIdle();
@@ -430,7 +523,12 @@ int main(int argc, char **argv) {
   compute_writeonly_buffer.destroy(&allocator);
   compute_readonly_buffer.destroy(&allocator);
 
+  sphere_vertex_buffer.destroy(&allocator);
+  sphere_index_buffer.destroy(&allocator);
+
   compute_pipeline.destroy(&device);
+
+  global_uniform_buffer.destroy(&allocator);
   graphics_pipeline.destroy(&device);
 
   VulkanDescriptorSetLayoutCache::shutdown(&device);
@@ -478,4 +576,87 @@ int main(int argc, char **argv) {
   SDL_Quit();
 
   return 0;
+}
+
+std::vector<f32> generateSphereVertices(f32 radius, i32 sectorCount,
+                                        i32 stackCount) {
+  std::vector<f32> vertices;
+
+  const f32 PI = acos(-1.0f);
+
+  f32 x, y, z, xy;                           // vertex position
+  f32 nx, ny, nz, lengthInv = 1.0f / radius; // normal
+  f32 s, t;                                  // texCoord
+
+  f32 sectorStep = 2 * PI / sectorCount;
+  f32 stackStep = PI / stackCount;
+  f32 sectorAngle, stackAngle;
+
+  for (u32 i = 0; i <= stackCount; ++i) {
+    stackAngle = PI / 2 - i * stackStep; // starting from pi/2 to -pi/2
+    xy = radius * cosf(stackAngle);      // r * cos(u)
+    z = radius * sinf(stackAngle);       // r * sin(u)
+
+    // add (sectorCount+1) vertices per stack
+    // the first and last vertices have same position and normal, but different
+    // tex coords
+    for (u32 j = 0; j <= sectorCount; ++j) {
+      sectorAngle = j * sectorStep; // starting from 0 to 2pi
+
+      // vertex position
+      x = xy * cosf(sectorAngle); // r * cos(u) * cos(v)
+      y = xy * sinf(sectorAngle); // r * cos(u) * sin(v)
+      vertices.push_back(x);
+      vertices.push_back(y);
+      vertices.push_back(z);
+
+      // normalized vertex normal
+      nx = x * lengthInv;
+      ny = y * lengthInv;
+      nz = z * lengthInv;
+      vertices.push_back(nx);
+      vertices.push_back(ny);
+      vertices.push_back(nz);
+
+      //   // vertex tex coord between [0, 1]
+      //   s = (f32)j / sectorCount;
+      //   t = (f32)i / stackCount;
+      //   vertices.push_back(s);
+      //   vertices.push_back(t);
+    }
+  }
+
+  return vertices;
+}
+
+std::vector<u32> generateSphereIndices(i32 sectorCount, i32 stackCount) {
+  std::vector<u32> indices;
+
+  // indices
+  //  k1--k1+1
+  //  |  / |
+  //  | /  |
+  //  k2--k2+1
+  u32 k1, k2;
+  for (u32 i = 0; i < stackCount; ++i) {
+    k1 = i * (sectorCount + 1); // beginning of current stack
+    k2 = k1 + sectorCount + 1;  // beginning of next stack
+
+    for (u32 j = 0; j < sectorCount; ++j, ++k1, ++k2) {
+      // 2 triangles per sector excluding 1st and last stacks
+      if (i != 0) {
+        indices.push_back(k1);
+        indices.push_back(k2);
+        indices.push_back(k1 + 1);
+      }
+
+      if (i != (stackCount - 1)) {
+        indices.push_back(k1 + 1);
+        indices.push_back(k2);
+        indices.push_back(k2 + 1);
+      }
+    }
+  }
+
+  return indices;
 }

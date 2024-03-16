@@ -35,12 +35,14 @@ struct VulkanCommandBuffer {
   void scissorSet(glm::vec4 scissor_values);
   void pipelineBind(VkPipelineBindPoint bind_point, VulkanPipeline *pipeline);
   void draw(u32 vertex_count, u32 instance_count);
+  void drawIndexed(u32 element_count);
   void dispatch(u32 local_size_x, u32 local_size_y);
   void descriptorSetBind(VulkanPipeline *pipeline,
                          VkPipelineBindPoint bind_point,
                          VkDescriptorSet descriptor_set, u32 set_index,
                          u32 dynamic_offset_count, u32 *dynamic_offsets);
-  void bufferBind(VulkanBuffer *buffer, u32 offset);
+  void bufferVertexBind(VulkanBuffer *buffer, u32 offset);
+  void bufferIndexBind(VulkanBuffer *buffer, u32 offset);
   void pushConstants(VulkanPipeline *pipeline, VkShaderStageFlags stage_flags,
                      u32 offset, u32 size, void *values);
 };

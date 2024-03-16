@@ -122,6 +122,10 @@ void VulkanCommandBuffer::draw(u32 vertex_count, u32 instance_count) {
   vkCmdDraw(handle, vertex_count, instance_count, 0, 0);
 }
 
+void VulkanCommandBuffer::drawIndexed(u32 element_count) {
+  vkCmdDrawIndexed(handle, element_count, 1, 0, 0, 0);
+}
+
 void VulkanCommandBuffer::dispatch(u32 local_size_x, u32 local_size_y) {
   vkCmdDispatch(handle, local_size_x, local_size_y, 1);
 }
@@ -137,10 +141,14 @@ void VulkanCommandBuffer::descriptorSetBind(VulkanPipeline *pipeline,
                           dynamic_offsets);
 }
 
-void VulkanCommandBuffer::bufferBind(VulkanBuffer *buffer, u32 offset) {
+void VulkanCommandBuffer::bufferVertexBind(VulkanBuffer *buffer, u32 offset) {
   VkDeviceSize offsets[] = {offset};
 
   vkCmdBindVertexBuffers(handle, 0, 1, &buffer->handle, offsets);
+}
+
+void VulkanCommandBuffer::bufferIndexBind(VulkanBuffer *buffer, u32 offset) {
+  vkCmdBindIndexBuffer(handle, buffer->handle, offset, VK_INDEX_TYPE_UINT32);
 }
 
 void VulkanCommandBuffer::pushConstants(VulkanPipeline *pipeline,

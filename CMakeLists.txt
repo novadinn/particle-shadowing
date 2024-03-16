@@ -41,6 +41,7 @@ include_directories(
 
 add_executable(${PROJECT_NAME}
   src/main.cpp
+  src/camera.cpp
   src/core/logger.cpp
   src/core/input.cpp
   src/renderer/vulkan/vulkan_instance.cpp

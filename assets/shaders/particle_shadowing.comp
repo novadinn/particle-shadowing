@@ -1,0 +1,26 @@
+#version 450
+
+layout(local_size_x = 16) in;
+
+struct Particle {
+  vec3 pos;
+  float radius;
+  float opacity;
+};
+
+layout(std140, set = 0, binding = 0) readonly buffer sbParticles {
+  Particle particles[];
+};
+
+layout (std430, set = 1, binding = 0) writeonly buffer sbShadows
+{
+	float shadows[];
+};
+
+void main() {
+  uint idx = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+
+  for(int i = 0; i < particles.length(); i++) {
+    shadows[i] = 1.0;
+  }
+}

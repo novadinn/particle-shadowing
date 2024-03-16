@@ -7,8 +7,9 @@
 
 #include <glm/glm.hpp>
 
-b8 VulkanSwapchain::create(VulkanDevice *device, VulkanSurface *surface,
-                           u32 width, u32 height) {
+b8 VulkanSwapchain::create(VulkanDevice *device,
+                           VulkanMemoryAllocator *allocator,
+                           VulkanSurface *surface, u32 width, u32 height) {
   u32 format_count = 0;
   VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(
       device->physical_device, surface->handle, &format_count, 0));
@@ -136,12 +137,20 @@ b8 VulkanSwapchain::create(VulkanDevice *device, VulkanSurface *surface,
                                &image_views[i]));
   }
 
-  /* TODO: depth attachment? */
+  if (!depth_texture.create(device, allocator, VK_FORMAT_D32_SFLOAT_S8_UINT,
+                            width, height,
+                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
+    ERROR("Failed to create a depth attachment!");
+    return false;
+  }
 
   return true;
 }
 
-void VulkanSwapchain::destroy(VulkanDevice *device) {
+void VulkanSwapchain::destroy(VulkanDevice *device,
+                              VulkanMemoryAllocator *allocator) {
+  depth_texture.destroy(device, allocator);
+
   for (u32 i = 0; i < image_views.size(); ++i) {
     vkDestroyImageView(device->logical_device, image_views[i], 0);
   }

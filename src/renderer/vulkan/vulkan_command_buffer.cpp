@@ -67,11 +67,14 @@ void VulkanCommandBuffer::renderPassBegin(VulkanRenderPass *render_pass,
                                           VulkanFramebuffer *framebuffer,
                                           glm::vec4 clear_color,
                                           glm::vec4 render_area) {
-  VkClearValue clear_value = {};
-  clear_value.color.float32[0] = clear_color.r;
-  clear_value.color.float32[1] = clear_color.g;
-  clear_value.color.float32[2] = clear_color.b;
-  clear_value.color.float32[3] = clear_color.a;
+  std::vector<VkClearValue> clear_values;
+  clear_values.resize(2);
+  clear_values[0].color.float32[0] = clear_color.r;
+  clear_values[0].color.float32[1] = clear_color.g;
+  clear_values[0].color.float32[2] = clear_color.b;
+  clear_values[0].color.float32[3] = clear_color.a;
+  clear_values[1].depthStencil.depth = 1.0f;
+  clear_values[1].depthStencil.stencil = 0.0f;
 
   VkRenderPassBeginInfo render_pass_begin_info = {};
   render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -82,8 +85,8 @@ void VulkanCommandBuffer::renderPassBegin(VulkanRenderPass *render_pass,
   render_pass_begin_info.renderArea.offset.y = render_area.y;
   render_pass_begin_info.renderArea.extent.width = render_area.z;
   render_pass_begin_info.renderArea.extent.height = render_area.w;
-  render_pass_begin_info.clearValueCount = 1;
-  render_pass_begin_info.pClearValues = &clear_value;
+  render_pass_begin_info.clearValueCount = clear_values.size();
+  render_pass_begin_info.pClearValues = clear_values.data();
 
   vkCmdBeginRenderPass(handle, &render_pass_begin_info,
                        VK_SUBPASS_CONTENTS_INLINE);

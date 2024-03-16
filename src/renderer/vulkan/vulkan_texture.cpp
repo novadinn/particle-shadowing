@@ -69,7 +69,9 @@ b8 VulkanTexture::create(VulkanDevice *device, VulkanMemoryAllocator *allocator,
   view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
   view_create_info.format = format;
   /* view_create_info.components; */
-  view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  view_create_info.subresourceRange.aspectMask =
+      format == VK_FORMAT_D32_SFLOAT_S8_UINT ? VK_IMAGE_ASPECT_DEPTH_BIT
+                                             : VK_IMAGE_ASPECT_COLOR_BIT;
   view_create_info.subresourceRange.baseMipLevel = 0;
   view_create_info.subresourceRange.levelCount = 1;
   view_create_info.subresourceRange.baseArrayLayer = 0;

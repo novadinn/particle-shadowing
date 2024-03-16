@@ -19,17 +19,55 @@ layout (std430, set = 1, binding = 0) writeonly buffer sbShadows
 	float shadows[];
 };
 
+bool sphereHit(vec3 ray_origin, vec3 ray_dir, vec3 sphereCentre, float sphereRadius) {
+  vec3 offsetRayOrigin = ray_origin - sphereCentre;
+  float a = dot(ray_dir, ray_dir);
+  float b = 2 * dot(offsetRayOrigin, ray_dir);
+  float c = dot(offsetRayOrigin, offsetRayOrigin) - sphereRadius * sphereRadius;
+  float discrimintant = b * b - 4 * a * c;
+
+  if (discrimintant >= 0) {
+    float dst = (-b - sqrt(discrimintant)) / (2 * a);
+
+    if (dst >= 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void main() {
+  vec3 sunDir = normalize(vec3(0.0, 1.0, 0.0));
+
   uint index = gl_GlobalInvocationID.x;
   if (index > particles.length()) {
     return;
   }
 
-  Particle particle = particles[index];
+  Particle current = particles[index];
   float shadow = 0.0;
 
   for(int i = 0; i < particles.length(); i++) {
+    if(i == index) {
+      continue;
+    } 
+
+    Particle other = particles[i];
+
+    vec3 toOther = other.pos - current.pos;
+
+    if(dot(toOther, sunDir) <= 0.0) {
+      continue;
+    }
+
+    float dst = length(toOther);
+
+    if(dst > ((other.radius + current.radius) * 0.5) && sphereHit(current.pos, sunDir, other.pos, other.radius)) {
+      shadow = 1.0;
+      break;
+    }
   }
 
-  shadows[index] = shadow;
+  shadows[index] = 1 - shadow;
 }

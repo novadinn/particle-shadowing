@@ -1,8 +1,13 @@
+/* clang-format off */
 #include "camera.h"
 #include "core/input.h"
 #include "core/logger.h"
 #include "core/platform.h"
 #include "particle_system.h"
+#ifndef VMA_IMPLEMENTATION
+#define VMA_IMPLEMENTATION
+#endif
+#include "renderer/vulkan/vulkan_memory_allocator.h"
 #include "renderer/vulkan/vk_check.h"
 #include "renderer/vulkan/vulkan_buffer.h"
 #include "renderer/vulkan/vulkan_command_buffer.h"
@@ -15,11 +20,6 @@
 #include "renderer/vulkan/vulkan_fence.h"
 #include "renderer/vulkan/vulkan_framebuffer.h"
 #include "renderer/vulkan/vulkan_instance.h"
-
-#ifndef VMA_IMPLEMENTATION
-#define VMA_IMPLEMENTATION
-#endif
-#include "renderer/vulkan/vulkan_memory_allocator.h"
 #include "renderer/vulkan/vulkan_queue.h"
 #include "renderer/vulkan/vulkan_render_pass.h"
 #include "renderer/vulkan/vulkan_semaphore.h"
@@ -32,6 +32,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <vulkan/vulkan.h>
+/* clang-format on */
 
 struct GlobalUBO {
   glm::mat4 projection;
@@ -41,6 +42,7 @@ struct GlobalUBO {
 struct PushConstants {
   glm::mat4 model;
   u32 shadow_index;
+  f32 opacity;
 };
 
 std::vector<f32> generateSphereVertices(f32 radius, i32 sector_count,
@@ -93,8 +95,11 @@ int main(int argc, char **argv) {
   VulkanDevice device;
   device.create(&instance, &surface);
 
+  VulkanMemoryAllocator allocator;
+  allocator.create(&instance, &device, application_info.apiVersion);
+
   VulkanSwapchain swapchain;
-  swapchain.create(&device, &surface, window_width, window_height);
+  swapchain.create(&device, &allocator, &surface, window_width, window_height);
 
   VulkanRenderPass render_pass;
   render_pass.create(&device, &swapchain);
@@ -102,13 +107,11 @@ int main(int argc, char **argv) {
   std::vector<VulkanFramebuffer> framebuffers;
   framebuffers.resize(swapchain.images.size());
   for (u32 i = 0; i < framebuffers.size(); ++i) {
-    std::vector<VkImageView> attachments = {swapchain.image_views[i]};
+    std::vector<VkImageView> attachments = {swapchain.image_views[i],
+                                            swapchain.depth_texture.view};
     framebuffers[i].create(&device, &render_pass, attachments, window_width,
                            window_height);
   }
-
-  VulkanMemoryAllocator allocator;
-  allocator.create(&instance, &device, application_info.apiVersion);
 
   VulkanQueue graphics_queue;
   graphics_queue.get(&device, device.graphics_family_index);
@@ -194,9 +197,30 @@ int main(int argc, char **argv) {
   graphics_descriptor_set_layout_create_info.bindingCount = 1;
   graphics_descriptor_set_layout_create_info.pBindings =
       &descriptor_set_layout_binding;
-  VkDescriptorSetLayout graphics_descriptor_set_layout =
+
+  VkDescriptorSetLayoutBinding writeonly_descriptor_set_layout_binding =
+      vulkanDescriptorSetLayoutBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                       VK_SHADER_STAGE_FRAGMENT_BIT);
+  writeonly_descriptor_set_layout_binding = vulkanDescriptorSetLayoutBinding(
+      0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT);
+  VkDescriptorSetLayoutCreateInfo
+      graphics_writeonly_descriptor_set_layout_create_info = {};
+  graphics_writeonly_descriptor_set_layout_create_info.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  graphics_writeonly_descriptor_set_layout_create_info.pNext = 0;
+  graphics_writeonly_descriptor_set_layout_create_info.flags = 0;
+  graphics_writeonly_descriptor_set_layout_create_info.bindingCount = 1;
+  graphics_writeonly_descriptor_set_layout_create_info.pBindings =
+      &writeonly_descriptor_set_layout_binding;
+
+  std::vector<VkDescriptorSetLayout> graphics_descriptor_set_layouts;
+  graphics_descriptor_set_layouts.resize(2);
+  graphics_descriptor_set_layouts[0] =
       VulkanDescriptorSetLayoutCache::layoutCreate(
           &device, &graphics_descriptor_set_layout_create_info);
+  graphics_descriptor_set_layouts[1] =
+      VulkanDescriptorSetLayoutCache::layoutCreate(
+          &device, &graphics_writeonly_descriptor_set_layout_create_info);
 
   std::vector<VkPipelineShaderStageCreateInfo>
       graphics_pipeline_stage_create_infos;
@@ -220,7 +244,8 @@ int main(int argc, char **argv) {
   graphics_pipeline_stage_create_infos[1].pSpecializationInfo = 0;
 
   VkPushConstantRange push_constant_range = {};
-  push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_constant_range.stageFlags =
+      VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   push_constant_range.offset = 0;
   push_constant_range.size = sizeof(PushConstants);
 
@@ -239,7 +264,8 @@ int main(int argc, char **argv) {
 
   VulkanPipeline graphics_pipeline;
   graphics_pipeline.createGraphics(
-      &device, &render_pass, 1, &graphics_descriptor_set_layout,
+      &device, &render_pass, graphics_descriptor_set_layouts.size(),
+      graphics_descriptor_set_layouts.data(),
       graphics_pipeline_stage_create_infos.size(),
       graphics_pipeline_stage_create_infos.data(), 1, &push_constant_range, 0,
       0, viewport, scissor);
@@ -254,6 +280,13 @@ int main(int argc, char **argv) {
                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                                VMA_MEMORY_USAGE_CPU_TO_GPU);
 
+  VulkanBuffer shadows_buffer;
+  shadows_buffer.create(&allocator, sizeof(f32) * NUM_PARTICLES,
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        VMA_MEMORY_USAGE_GPU_ONLY);
+
   VulkanDescriptorSetBuilder builder;
   VkDescriptorSet global_ubo_descriptor_set;
   builder.begin();
@@ -265,6 +298,17 @@ int main(int argc, char **argv) {
                      VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                      VK_SHADER_STAGE_VERTEX_BIT);
   builder.end(&device, &global_ubo_descriptor_set);
+
+  builder = {};
+  VkDescriptorSet graphics_readonly_descriptor_set;
+  VkDescriptorBufferInfo graphics_readonly_buffer_info = {};
+  graphics_readonly_buffer_info.buffer = shadows_buffer.handle;
+  graphics_readonly_buffer_info.offset = 0;
+  graphics_readonly_buffer_info.range = shadows_buffer.size;
+  builder.bufferBind(0, &graphics_readonly_buffer_info,
+                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                     VK_SHADER_STAGE_FRAGMENT_BIT);
+  builder.end(&device, &graphics_readonly_descriptor_set);
 
   VulkanShaderModule compute_shader_module;
   compute_shader_module.create(&device,
@@ -339,20 +383,13 @@ int main(int argc, char **argv) {
                      VK_SHADER_STAGE_COMPUTE_BIT);
   builder.end(&device, &compute_readonly_descriptor_set);
 
-  VulkanBuffer compute_writeonly_buffer;
-  compute_writeonly_buffer.create(&allocator, sizeof(f32) * NUM_PARTICLES,
-                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                                  VMA_MEMORY_USAGE_GPU_TO_CPU);
-
   builder = {};
   VkDescriptorSet compute_writeonly_descriptor_set;
   builder.begin();
   VkDescriptorBufferInfo compute_writeonly_buffer_info = {};
-  compute_writeonly_buffer_info.buffer = compute_writeonly_buffer.handle;
+  compute_writeonly_buffer_info.buffer = shadows_buffer.handle;
   compute_writeonly_buffer_info.offset = 0;
-  compute_writeonly_buffer_info.range = compute_writeonly_buffer.size;
+  compute_writeonly_buffer_info.range = shadows_buffer.size;
   builder.bufferBind(0, &compute_writeonly_buffer_info,
                      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                      VK_SHADER_STAGE_COMPUTE_BIT);
@@ -498,9 +535,14 @@ int main(int argc, char **argv) {
           glm::scale(glm::mat4(1.0f),
                      glm::vec3(particle_system.particles[i].radius));
       push_constants.shadow_index = i;
+      push_constants.opacity = particle_system.particles[i].opacity;
       graphics_command_buffer.pushConstants(
-          &graphics_pipeline, VK_SHADER_STAGE_VERTEX_BIT, 0,
+          &graphics_pipeline,
+          VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
           sizeof(PushConstants), &push_constants);
+      graphics_command_buffer.descriptorSetBind(
+          &graphics_pipeline, VK_PIPELINE_BIND_POINT_GRAPHICS,
+          graphics_readonly_descriptor_set, 1, 0, 0);
       graphics_command_buffer.drawIndexed(sphere_indices.size());
     }
 
@@ -529,7 +571,7 @@ int main(int argc, char **argv) {
 
   device.waitIdle();
 
-  compute_writeonly_buffer.destroy(&allocator);
+  shadows_buffer.destroy(&allocator);
   compute_readonly_buffer.destroy(&allocator);
 
   sphere_vertex_buffer.destroy(&allocator);
@@ -559,15 +601,15 @@ int main(int argc, char **argv) {
   graphics_command_pool.destroy(&device);
   compute_command_pool.destroy(&device);
 
-  allocator.destroy();
-
   for (u32 i = 0; i < framebuffers.size(); ++i) {
     framebuffers[i].destroy(&device);
   }
 
   render_pass.destroy(&device);
 
-  swapchain.destroy(&device);
+  swapchain.destroy(&device, &allocator);
+
+  allocator.destroy();
 
   device.destroy();
 

@@ -2,6 +2,7 @@
 #include "core/input.h"
 #include "core/logger.h"
 #include "core/platform.h"
+#include "particle_system.h"
 #include "renderer/vulkan/vk_check.h"
 #include "renderer/vulkan/vulkan_buffer.h"
 #include "renderer/vulkan/vulkan_command_buffer.h"
@@ -14,6 +15,7 @@
 #include "renderer/vulkan/vulkan_fence.h"
 #include "renderer/vulkan/vulkan_framebuffer.h"
 #include "renderer/vulkan/vulkan_instance.h"
+
 #ifndef VMA_IMPLEMENTATION
 #define VMA_IMPLEMENTATION
 #endif
@@ -31,12 +33,6 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
-struct Particle {
-  glm::vec3 pos;
-  f32 radius;
-  f32 opacity;
-};
-
 struct GlobalUBO {
   glm::mat4 projection;
   glm::mat4 view;
@@ -44,11 +40,12 @@ struct GlobalUBO {
 
 struct PushConstants {
   glm::mat4 model;
+  u32 shadow_index;
 };
 
-std::vector<f32> generateSphereVertices(f32 radius, i32 sectorCount,
-                                        i32 stackCount);
-std::vector<u32> generateSphereIndices(i32 sectorCount, i32 stackCount);
+std::vector<f32> generateSphereVertices(f32 radius, i32 sector_count,
+                                        i32 stack_count);
+std::vector<u32> generateSphereIndices(i32 sector_count, i32 stack_count);
 
 int main(int argc, char **argv) {
   if (SDL_Init(SDL_INIT_EVERYTHING) < 0) {
@@ -324,7 +321,7 @@ int main(int argc, char **argv) {
   compute_shader_module.destroy(&device);
 
   VulkanBuffer compute_readonly_buffer;
-  compute_readonly_buffer.create(&allocator, sizeof(Particle) * 1024,
+  compute_readonly_buffer.create(&allocator, sizeof(Particle) * NUM_PARTICLES,
                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -343,7 +340,7 @@ int main(int argc, char **argv) {
   builder.end(&device, &compute_readonly_descriptor_set);
 
   VulkanBuffer compute_writeonly_buffer;
-  compute_writeonly_buffer.create(&allocator, sizeof(f32) * 1024,
+  compute_writeonly_buffer.create(&allocator, sizeof(f32) * NUM_PARTICLES,
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -363,6 +360,9 @@ int main(int argc, char **argv) {
 
   Camera camera;
   camera.create(45, (f32)window_width / (f32)window_height, 0.1f, 1000.0f);
+
+  ParticleSystem particle_system;
+  particle_system.createExplosion(glm::vec3(0.0f));
 
   glm::ivec2 previous_mouse = {0, 0};
   b8 running = true;
@@ -420,6 +420,8 @@ int main(int argc, char **argv) {
       camera.zoom(delta_time * wheel_movement.y * 5);
     }
 
+    particle_system.update(delta_time);
+
     device.waitIdle();
 
     VulkanFence &compute_fence = compute_in_flight_fences[current_frame];
@@ -432,6 +434,7 @@ int main(int argc, char **argv) {
 
     compute_command_buffer.pipelineBind(VK_PIPELINE_BIND_POINT_COMPUTE,
                                         &compute_pipeline);
+    compute_readonly_buffer.loadData(&allocator, particle_system.particles);
     compute_command_buffer.descriptorSetBind(
         &compute_pipeline, VK_PIPELINE_BIND_POINT_COMPUTE,
         compute_readonly_descriptor_set, 0, 0, 0);
@@ -439,7 +442,7 @@ int main(int argc, char **argv) {
         &compute_pipeline, VK_PIPELINE_BIND_POINT_COMPUTE,
         compute_writeonly_descriptor_set, 1, 0, 0);
 
-    compute_command_buffer.dispatch(window_width / 16, 1);
+    compute_command_buffer.dispatch(NUM_PARTICLES / 256, 1);
 
     compute_command_buffer.end();
 
@@ -480,20 +483,26 @@ int main(int argc, char **argv) {
     global_ubo.projection = camera.getProjectionMatrix();
     global_ubo.view = camera.getViewMatrix();
     global_uniform_buffer.loadData(&allocator, &global_ubo);
-    PushConstants push_constants;
-    push_constants.model = glm::mat4(1.0);
 
+    graphics_command_buffer.pipelineBind(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         &graphics_pipeline);
     graphics_command_buffer.bufferVertexBind(&sphere_vertex_buffer, 0);
     graphics_command_buffer.bufferIndexBind(&sphere_index_buffer, 0);
     graphics_command_buffer.descriptorSetBind(
         &graphics_pipeline, VK_PIPELINE_BIND_POINT_GRAPHICS,
         global_ubo_descriptor_set, 0, 0, 0);
-    graphics_command_buffer.pushConstants(
-        &graphics_pipeline, VK_SHADER_STAGE_VERTEX_BIT, 0,
-        sizeof(PushConstants), &push_constants);
-    graphics_command_buffer.pipelineBind(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                         &graphics_pipeline);
-    graphics_command_buffer.drawIndexed(sphere_indices.size());
+    for (u32 i = 0; i < NUM_PARTICLES; ++i) {
+      PushConstants push_constants;
+      push_constants.model =
+          glm::translate(glm::mat4(1.0f), particle_system.particles[i].pos) *
+          glm::scale(glm::mat4(1.0f),
+                     glm::vec3(particle_system.particles[i].radius));
+      push_constants.shadow_index = i;
+      graphics_command_buffer.pushConstants(
+          &graphics_pipeline, VK_SHADER_STAGE_VERTEX_BIT, 0,
+          sizeof(PushConstants), &push_constants);
+      graphics_command_buffer.drawIndexed(sphere_indices.size());
+    }
 
     graphics_command_buffer.renderPassEnd();
 
@@ -578,58 +587,44 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-std::vector<f32> generateSphereVertices(f32 radius, i32 sectorCount,
-                                        i32 stackCount) {
+std::vector<f32> generateSphereVertices(f32 radius, i32 sector_count,
+                                        i32 stack_count) {
   std::vector<f32> vertices;
 
   const f32 PI = acos(-1.0f);
 
-  f32 x, y, z, xy;                           // vertex position
-  f32 nx, ny, nz, lengthInv = 1.0f / radius; // normal
-  f32 s, t;                                  // texCoord
+  f32 x, y, z, xy;                            // vertex position
+  f32 nx, ny, nz, length_inv = 1.0f / radius; // normal
+  f32 s, t;                                   // texCoord
 
-  f32 sectorStep = 2 * PI / sectorCount;
-  f32 stackStep = PI / stackCount;
-  f32 sectorAngle, stackAngle;
+  f32 sector_step = 2 * PI / sector_count;
+  f32 stack_step = PI / stack_count;
+  f32 sector_angle, stack_angle;
 
-  for (u32 i = 0; i <= stackCount; ++i) {
-    stackAngle = PI / 2 - i * stackStep; // starting from pi/2 to -pi/2
-    xy = radius * cosf(stackAngle);      // r * cos(u)
-    z = radius * sinf(stackAngle);       // r * sin(u)
+  for (u32 i = 0; i <= stack_count; ++i) {
+    stack_angle = PI / 2 - i * stack_step; // starting from pi/2 to -pi/2
+    xy = radius * cosf(stack_angle);       // r * cos(u)
+    z = radius * sinf(stack_angle);        // r * sin(u)
 
-    // add (sectorCount+1) vertices per stack
+    // add (sector_count+1) vertices per stack
     // the first and last vertices have same position and normal, but different
     // tex coords
-    for (u32 j = 0; j <= sectorCount; ++j) {
-      sectorAngle = j * sectorStep; // starting from 0 to 2pi
+    for (u32 j = 0; j <= sector_count; ++j) {
+      sector_angle = j * sector_step; // starting from 0 to 2pi
 
       // vertex position
-      x = xy * cosf(sectorAngle); // r * cos(u) * cos(v)
-      y = xy * sinf(sectorAngle); // r * cos(u) * sin(v)
+      x = xy * cosf(sector_angle); // r * cos(u) * cos(v)
+      y = xy * sinf(sector_angle); // r * cos(u) * sin(v)
       vertices.push_back(x);
       vertices.push_back(y);
       vertices.push_back(z);
-
-      // normalized vertex normal
-      nx = x * lengthInv;
-      ny = y * lengthInv;
-      nz = z * lengthInv;
-      vertices.push_back(nx);
-      vertices.push_back(ny);
-      vertices.push_back(nz);
-
-      //   // vertex tex coord between [0, 1]
-      //   s = (f32)j / sectorCount;
-      //   t = (f32)i / stackCount;
-      //   vertices.push_back(s);
-      //   vertices.push_back(t);
     }
   }
 
   return vertices;
 }
 
-std::vector<u32> generateSphereIndices(i32 sectorCount, i32 stackCount) {
+std::vector<u32> generateSphereIndices(i32 sector_count, i32 stack_count) {
   std::vector<u32> indices;
 
   // indices
@@ -638,11 +633,11 @@ std::vector<u32> generateSphereIndices(i32 sectorCount, i32 stackCount) {
   //  | /  |
   //  k2--k2+1
   u32 k1, k2;
-  for (u32 i = 0; i < stackCount; ++i) {
-    k1 = i * (sectorCount + 1); // beginning of current stack
-    k2 = k1 + sectorCount + 1;  // beginning of next stack
+  for (u32 i = 0; i < stack_count; ++i) {
+    k1 = i * (sector_count + 1); // beginning of current stack
+    k2 = k1 + sector_count + 1;  // beginning of next stack
 
-    for (u32 j = 0; j < sectorCount; ++j, ++k1, ++k2) {
+    for (u32 j = 0; j < sector_count; ++j, ++k1, ++k2) {
       // 2 triangles per sector excluding 1st and last stacks
       if (i != 0) {
         indices.push_back(k1);
@@ -650,7 +645,7 @@ std::vector<u32> generateSphereIndices(i32 sectorCount, i32 stackCount) {
         indices.push_back(k1 + 1);
       }
 
-      if (i != (stackCount - 1)) {
+      if (i != (stack_count - 1)) {
         indices.push_back(k1 + 1);
         indices.push_back(k2);
         indices.push_back(k2 + 1);

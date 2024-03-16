@@ -98,20 +98,16 @@ b8 VulkanPipeline::createGraphics(
   /* TODO: hardcoded for now */
   VkVertexInputBindingDescription vertex_input_binding_description = {};
   vertex_input_binding_description.binding = 0;
-  vertex_input_binding_description.stride = sizeof(f32) * 6;
+  vertex_input_binding_description.stride = sizeof(f32) * 3;
   vertex_input_binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
   std::vector<VkVertexInputAttributeDescription>
       vertex_input_attribute_descriptions;
-  vertex_input_attribute_descriptions.resize(2);
+  vertex_input_attribute_descriptions.resize(1);
   vertex_input_attribute_descriptions[0].location = 0;
   vertex_input_attribute_descriptions[0].binding = 0;
   vertex_input_attribute_descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
   vertex_input_attribute_descriptions[0].offset = 0;
-  vertex_input_attribute_descriptions[1].location = 1;
-  vertex_input_attribute_descriptions[1].binding = 0;
-  vertex_input_attribute_descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-  vertex_input_attribute_descriptions[1].offset = sizeof(f32) * 3;
 
   VkPipelineVertexInputStateCreateInfo vertex_input_info = {};
   vertex_input_info.sType =

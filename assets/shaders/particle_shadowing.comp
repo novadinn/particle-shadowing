@@ -1,11 +1,13 @@
 #version 450
 
-layout(local_size_x = 16) in;
+layout(local_size_x = 256) in;
 
 struct Particle {
   vec3 pos;
+  float _pad0;
   float radius;
   float opacity;
+  vec2 _pad1;
 };
 
 layout(std140, set = 0, binding = 0) readonly buffer sbParticles {
@@ -18,9 +20,16 @@ layout (std430, set = 1, binding = 0) writeonly buffer sbShadows
 };
 
 void main() {
-  uint idx = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+  uint index = gl_GlobalInvocationID.x;
+  if (index > particles.length()) {
+    return;
+  }
+
+  Particle particle = particles[index];
+  float shadow = 0.0;
 
   for(int i = 0; i < particles.length(); i++) {
-    shadows[i] = 1.0;
   }
+
+  shadows[index] = shadow;
 }

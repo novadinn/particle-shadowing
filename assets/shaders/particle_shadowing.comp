@@ -43,6 +43,8 @@ bool sphereHit(vec3 ray_origin, vec3 ray_dir, vec3 sphereCentre, float sphereRad
 }
 
 void main() {
+  const float shadow_multiplier = 35.0;
+
   vec3 sunDir = normalize(pushConstants.sunDir.xyz);
 
   uint index = gl_GlobalInvocationID.x;
@@ -65,7 +67,7 @@ void main() {
     float dst = length(toOther);
 
     if(dst > ((other.radius + current.radius) * 0.5) && sphereHit(current.pos, sunDir, other.pos, other.radius)) {
-      shadow += 25.0 / float(particles.length()) * current.opacity;
+      shadow += shadow_multiplier / float(particles.length()) * current.opacity;
     }
   }
 

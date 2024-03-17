@@ -64,10 +64,8 @@ void main() {
 
     vec3 toOther = other.pos - current.pos;
 
-    float dst = length(toOther);
-
-    if(dst > ((other.radius + current.radius) * 0.5) && sphereHit(current.pos, sunDir, other.pos, other.radius)) {
-      shadow += shadow_multiplier / float(particles.length()) * current.opacity;
+    if(sphereHit(current.pos, sunDir, other.pos, other.radius)) {
+      shadow += (shadow_multiplier / float(particles.length())) * current.opacity;
     }
   }
 

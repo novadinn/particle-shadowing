@@ -452,7 +452,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    float delta_time = 0.01f;
+    float delta_time = 0.005f;
     glm::ivec2 current_mouse;
     Input::getMousePosition(&current_mouse.x, &current_mouse.y);
     glm::vec2 mouse_delta = current_mouse - previous_mouse;
@@ -493,7 +493,7 @@ int main(int argc, char **argv) {
         &compute_pipeline, VK_PIPELINE_BIND_POINT_COMPUTE,
         compute_writeonly_descriptor_set, 1, 0, 0);
     PushConstantsCompute push_constants_compute;
-    push_constants_compute.sun_dir = glm::vec4(0.0f, 1.0f, 0.0f, 0.0);
+    push_constants_compute.sun_dir = glm::vec4(1.0f, 1.0f, 1.0f, 0.0);
     compute_command_buffer.pushConstants(
         &compute_pipeline, VK_SHADER_STAGE_COMPUTE_BIT, 0,
         sizeof(PushConstantsCompute), &push_constants_compute);

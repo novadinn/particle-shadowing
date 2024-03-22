@@ -23,28 +23,16 @@ layout(push_constant) uniform PushConstants {
     vec4 sunDir;
 } pushConstants;
 
+#define SHARED_DATA_SIZE 1024
 
-bool sphereHit(vec3 ray_origin, vec3 ray_dir, vec3 sphereCentre, float sphereRadius) {
-  vec3 offsetRayOrigin = ray_origin - sphereCentre;
-  float a = dot(ray_dir, ray_dir);
-  float b = 2 * dot(offsetRayOrigin, ray_dir);
-  float c = dot(offsetRayOrigin, offsetRayOrigin) - sphereRadius * sphereRadius;
-  float discrimintant = b * b - 4 * a * c;
+shared vec3 sharedData[SHARED_DATA_SIZE];
 
-  if (discrimintant >= 0) {
-    float dst = (-b - sqrt(discrimintant)) / (2 * a);
+float circleOverlap(vec2 sphere1_center, float sphere1_radius, vec2 sphere2_center, float sphere2_radius);
 
-    if (dst >= 0) {
-      return true;
-    }
-  }
-
-  return false;
-}
+mat4 ortho(float left, float right, float bottom, float top, float nearVal, float farVal);
+mat4 lookAt(vec3 eye, vec3 center, vec3 up);
 
 void main() {
-  const float shadow_multiplier = 35.0;
-
   vec3 sunDir = normalize(pushConstants.sunDir.xyz);
 
   uint index = gl_GlobalInvocationID.x;
@@ -55,19 +43,87 @@ void main() {
   Particle current = particles[index];
   float shadow = 0.0;
 
-  for(int i = 0; i < particles.length(); i++) {
-    if(i == index) {
-      continue;
-    } 
+  const float near = -10.0;
+  const float far = 1000.0;
+  mat4 lightProjection = ortho(-1.0, 1.0, -1.0, 1.0, near, far);
+  mat4 lightView = lookAt(-sunDir, vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0));
+  mat4 lightModel = mat4(1.0);
+  mat4 lightMVP = lightProjection * lightView * lightModel;
 
+  vec2 currentPosition = (lightMVP * vec4(current.pos, 1.0)).xy;
+
+  for(int i = 0; i < particles.length(); i += SHARED_DATA_SIZE) {
     Particle other = particles[i];
+    if (i + gl_LocalInvocationID.x < particles.length()) {
+			sharedData[gl_LocalInvocationID.x] = vec3(lightMVP * vec4(other.pos, 1.0));
+		} else {
+			sharedData[gl_LocalInvocationID.x] = vec3(0.0);
+		}
 
-    vec3 toOther = other.pos - current.pos;
+    memoryBarrierShared();
+    barrier();
 
-    if(sphereHit(current.pos, sunDir, other.pos, other.radius)) {
-      shadow += (shadow_multiplier / float(particles.length())) * current.opacity;
+    for (int j = 0; j < gl_WorkGroupSize.x; j++) {
+      shadow += circleOverlap(currentPosition, current.radius, sharedData[j].xy, other.radius) * 0.1 * current.opacity;
     }
+
+    memoryBarrierShared();
+    barrier();
   }
 
   shadows[index] = 1 - shadow;
+}
+
+float circleOverlap(vec2 sphere1_center, float sphere1_radius, vec2 sphere2_center, float sphere2_radius) {
+
+    float distance = distance(sphere1_center, sphere2_center);
+    
+    if (distance >= (sphere1_radius + sphere2_radius)) {
+        return 0.0;
+    }
+
+    if (distance <= abs(sphere1_radius - sphere2_radius)) {
+        return 1.0;
+    }
+    
+    float d = (sphere1_radius * sphere1_radius - sphere2_radius * sphere2_radius + distance * distance) / (2.0 * distance);
+    
+    float area1 = acos(d / sphere1_radius) * sphere1_radius * sphere1_radius - d * sqrt(sphere1_radius * sphere1_radius - d * d);
+    float area2 = acos((distance - d) / sphere2_radius) * sphere2_radius * sphere2_radius - (distance - d) * sqrt(sphere2_radius * sphere2_radius - (distance - d) * (distance - d));
+    
+    return (area1 + area2) / (3.14159265359 * (sphere1_radius * sphere1_radius + sphere2_radius * sphere2_radius));
+}
+
+mat4 ortho(float left, float right, float bottom, float top, float nearVal, float farVal) {
+    mat4 result = mat4(1.0);
+    result[0][0] = 2.0 / (right - left);
+    result[1][1] = 2.0 / (top - bottom);
+    result[2][2] = -2.0 / (farVal - nearVal);
+    result[3][0] = -(right + left) / (right - left);
+    result[3][1] = -(top + bottom) / (top - bottom);
+    result[3][2] = -(farVal + nearVal) / (farVal - nearVal);
+
+    return result;
+}
+
+mat4 lookAt(vec3 eye, vec3 center, vec3 up) {
+    vec3 f = normalize(center - eye);
+		vec3 s = normalize(cross(f, up));
+		vec3 u = cross(s, f);
+
+		mat4 result = mat4(1.0);
+		result[0][0] = s.x;
+		result[1][0] = s.y;
+		result[2][0] = s.z;
+		result[0][1] = u.x;
+		result[1][1] = u.y;
+		result[2][1] = u.z;
+		result[0][2] = -f.x;
+		result[1][2] = -f.y;
+		result[2][2] = -f.z;
+		result[3][0] = -dot(s, eye);
+		result[3][1] = -dot(u, eye);
+		result[3][2] = dot(f, eye);
+
+		return result;
 }
